@@ -1,12 +1,12 @@
 "use server";
 
 import { requireAdmin } from "@/lib/auth";
-import { db, pool } from "@/lib/db/index";
+import { db } from "@/lib/db/index";
 import { bloodUnits, bloodRequests, activityLog } from "@/lib/db/schema";
 import { requestSchema } from "@/lib/validations";
 import { compatibleDonorGroups } from "@/lib/rules";
 import { logActivity } from "@/lib/activity";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { BloodGroup, Component } from "@/lib/rules";
 
@@ -39,6 +39,7 @@ export async function issueRequest(formData: FormData) {
   await requireAdmin();
 
   const requestId = Number(formData.get("requestId"));
+  if (!Number.isInteger(requestId) || requestId <= 0) return { ok: false, error: "Invalid request" };
   const allowSubstitutes = formData.get("allowSubstitutes") === "true";
 
   const [req] = await db.select().from(bloodRequests).where(eq(bloodRequests.id, requestId));
@@ -51,23 +52,22 @@ export async function issueRequest(formData: FormData) {
 
   try {
     await db.transaction(async (tx) => {
-      // Find available units using FOR UPDATE SKIP LOCKED (raw SQL for this)
-      const groupPlaceholders = allowedGroups.map((_, i) => `$${i + 3}`).join(",");
-      const rawUnits = await pool.query(
-        `SELECT id FROM blood_units
-         WHERE status = 'available'
-           AND component = $1
-           AND expires_at >= CURRENT_DATE
-           AND blood_group IN (${groupPlaceholders})
-         ORDER BY
-           CASE WHEN blood_group = $2 THEN 0 ELSE 1 END,
-           expires_at ASC
-         LIMIT ${req.unitsRequested}
-         FOR UPDATE SKIP LOCKED`,
-        [req.component, req.bloodGroup, ...allowedGroups]
-      );
+      // Lock available units inside this transaction so concurrent issues
+      // can't claim the same units.
+      const rawUnits = await tx.execute<{ id: number }>(sql`
+        SELECT id FROM blood_units
+        WHERE status = 'available'
+          AND component = ${req.component}
+          AND expires_at >= CURRENT_DATE
+          AND blood_group::text IN (${sql.join(allowedGroups.map((g) => sql`${g}`), sql`, `)})
+        ORDER BY
+          CASE WHEN blood_group = ${req.bloodGroup} THEN 0 ELSE 1 END,
+          expires_at ASC
+        LIMIT ${req.unitsRequested}
+        FOR UPDATE SKIP LOCKED
+      `);
 
-      const unitIds: number[] = rawUnits.rows.map((r: { id: number }) => r.id);
+      const unitIds = rawUnits.rows.map((r) => r.id);
 
       if (unitIds.length < req.unitsRequested) {
         const shortBy = req.unitsRequested - unitIds.length;
@@ -79,10 +79,12 @@ export async function issueRequest(formData: FormData) {
         .set({ status: "issued", requestId, issuedAt: new Date() })
         .where(inArray(bloodUnits.id, unitIds));
 
-      // Fulfill request
-      await tx.update(bloodRequests)
+      // Fulfill request (only if nobody else fulfilled/cancelled it meanwhile)
+      const fulfilled = await tx.update(bloodRequests)
         .set({ status: "fulfilled", fulfilledAt: new Date() })
-        .where(eq(bloodRequests.id, requestId));
+        .where(and(eq(bloodRequests.id, requestId), eq(bloodRequests.status, "pending")))
+        .returning({ id: bloodRequests.id });
+      if (fulfilled.length === 0) throw new Error("NOT_PENDING");
 
       await logActivity(tx, {
         action: "request.fulfilled",
@@ -105,6 +107,7 @@ export async function issueRequest(formData: FormData) {
       const n = msg.split(":")[1];
       return { ok: false, error: `Insufficient stock — short by ${n} unit(s). No changes made.` };
     }
+    if (msg === "NOT_PENDING") return { ok: false, error: "Request is no longer pending" };
     console.error(err);
     return { ok: false, error: "Failed to issue request" };
   }
@@ -115,12 +118,15 @@ export async function cancelRequest(formData: FormData) {
   await requireAdmin();
 
   const requestId = Number(formData.get("requestId"));
+  if (!Number.isInteger(requestId) || requestId <= 0) return { ok: false, error: "Invalid request" };
   const [req] = await db.select().from(bloodRequests).where(eq(bloodRequests.id, requestId));
   if (!req) return { ok: false, error: "Request not found" };
   if (req.status !== "pending") return { ok: false, error: "Only pending requests can be cancelled" };
 
   await db.transaction(async (tx) => {
-    await tx.update(bloodRequests).set({ status: "cancelled" }).where(eq(bloodRequests.id, requestId));
+    await tx.update(bloodRequests)
+      .set({ status: "cancelled" })
+      .where(and(eq(bloodRequests.id, requestId), eq(bloodRequests.status, "pending")));
     await logActivity(tx, {
       action: "request.cancelled",
       entity: "request",

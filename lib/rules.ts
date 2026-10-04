@@ -76,8 +76,9 @@ export function compatibleDonorGroups(
 
 // ── Expiry date helper ──────────────────────────────────────
 export function expiryDate(collectedAt: Date, component: Component): Date {
+  // "YYYY-MM-DD" strings parse as UTC midnight, so do the math in UTC too.
   const d = new Date(collectedAt);
-  d.setDate(d.getDate() + SHELF_LIFE_DAYS[component]);
+  d.setUTCDate(d.getUTCDate() + SHELF_LIFE_DAYS[component]);
   return d;
 }
 
@@ -103,9 +104,9 @@ export function isEligible(input: EligibilityInput): EligibilityResult {
   const dob = new Date(input.dateOfBirth);
 
   // Age
-  let age = donation.getFullYear() - dob.getFullYear();
-  const m = donation.getMonth() - dob.getMonth();
-  if (m < 0 || (m === 0 && donation.getDate() < dob.getDate())) age--;
+  let age = donation.getUTCFullYear() - dob.getUTCFullYear();
+  const m = donation.getUTCMonth() - dob.getUTCMonth();
+  if (m < 0 || (m === 0 && donation.getUTCDate() < dob.getUTCDate())) age--;
 
   if (age < ELIGIBILITY.MIN_AGE || age > ELIGIBILITY.MAX_AGE) {
     reasons.push(`Donor age (${age}) must be between ${ELIGIBILITY.MIN_AGE} and ${ELIGIBILITY.MAX_AGE}.`);

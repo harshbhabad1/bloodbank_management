@@ -1,7 +1,4 @@
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config({ path: ".env" });
-
+import "./env";
 import { db, pool } from "./index";
 import { bloodUnits, donors, donations, bloodRequests, activityLog } from "./schema";
 import type { BloodGroup, Component } from "../rules";

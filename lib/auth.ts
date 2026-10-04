@@ -7,7 +7,13 @@ const SESSION_COOKIE = "bb_session";
 const SESSION_EXPIRY = 7 * 24 * 60 * 60; // 7 days in seconds
 
 function getSecret() {
-  const secret = process.env.SESSION_SECRET || "bloodbank-dev-secret-session-token-32chars";
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("SESSION_SECRET must be set to at least 32 characters in production.");
+    }
+    return new TextEncoder().encode("bloodbank-dev-secret-session-token-32chars");
+  }
   return new TextEncoder().encode(secret);
 }
 

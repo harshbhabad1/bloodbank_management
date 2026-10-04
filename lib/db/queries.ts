@@ -6,8 +6,19 @@ import {
   bloodRequests,
   activityLog,
 } from "./schema";
-import { eq, ilike, or, and, lt, sql, desc, asc, count } from "drizzle-orm";
+import { eq, ilike, or, and, lt, sql, desc, asc, count, inArray } from "drizzle-orm";
 import type { BloodGroup, Component } from "../rules";
+
+// ── Param guards ─────────────────────────────────────────────
+// URL params are untrusted; invalid ids/enum values would otherwise
+// surface as Postgres errors (500s) instead of empty results / 404s.
+export function isValidId(id: number) {
+  return Number.isInteger(id) && id > 0 && id <= 2147483647;
+}
+
+function oneOf<T extends string>(values: readonly T[], v?: string): T | undefined {
+  return v && (values as readonly string[]).includes(v) ? (v as T) : undefined;
+}
 
 // ── Expiry sweep ─────────────────────────────────────────────
 export async function expireStaleUnits() {
@@ -38,7 +49,7 @@ export async function listDonors(search?: string) {
         or(
           ilike(donors.name, `%${search}%`),
           ilike(donors.phone, `%${search}%`),
-          ilike(donors.bloodGroup, `%${search}%`)
+          ilike(sql`${donors.bloodGroup}::text`, `%${search}%`)
         )
       )
       .orderBy(asc(donors.name));
@@ -47,6 +58,7 @@ export async function listDonors(search?: string) {
 }
 
 export async function getDonor(id: number) {
+  if (!isValidId(id)) return null;
   const donor = await db.query.donors.findFirst({
     where: eq(donors.id, id),
     with: {
@@ -65,11 +77,14 @@ export async function listBloodUnits(filters?: {
   component?: string;
   status?: string;
 }) {
+  const group = oneOf(bloodUnits.bloodGroup.enumValues, filters?.group);
+  const component = oneOf(bloodUnits.component.enumValues, filters?.component);
+  const status = oneOf(bloodUnits.status.enumValues, filters?.status);
   return db.query.bloodUnits.findMany({
     where: and(
-      filters?.group ? eq(bloodUnits.bloodGroup, filters.group as BloodGroup) : undefined,
-      filters?.component ? eq(bloodUnits.component, filters.component as Component) : undefined,
-      filters?.status ? eq(bloodUnits.status, filters.status as "available" | "issued" | "expired" | "discarded") : undefined
+      group ? eq(bloodUnits.bloodGroup, group) : undefined,
+      component ? eq(bloodUnits.component, component) : undefined,
+      status ? eq(bloodUnits.status, status) : undefined
     ),
     orderBy: [asc(bloodUnits.expiresAt)],
     with: { donation: { with: { donor: true } } },
@@ -91,26 +106,26 @@ export async function getStockSummary() {
 }
 
 export async function getExpiringSoon(days = 3) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() + days);
   return db.query.bloodUnits.findMany({
     where: and(
       eq(bloodUnits.status, "available"),
-      lt(bloodUnits.expiresAt, cutoff.toISOString().split("T")[0])
+      lt(bloodUnits.expiresAt, sql`CURRENT_DATE + ${days}::int`)
     ),
     orderBy: [asc(bloodUnits.expiresAt)],
   });
 }
 
 // ── Requests ──────────────────────────────────────────────────
-export async function listRequests(status?: string) {
+export async function listRequests(statusFilter?: string) {
+  const status = oneOf(bloodRequests.status.enumValues, statusFilter);
   return db.query.bloodRequests.findMany({
-    where: status ? eq(bloodRequests.status, status as "pending" | "fulfilled" | "cancelled") : undefined,
+    where: status ? eq(bloodRequests.status, status) : undefined,
     orderBy: [desc(bloodRequests.urgency), desc(bloodRequests.createdAt)],
   });
 }
 
 export async function getRequest(id: number) {
+  if (!isValidId(id)) return undefined;
   return db.query.bloodRequests.findFirst({
     where: eq(bloodRequests.id, id),
     with: {
@@ -134,7 +149,7 @@ export async function countMatchingStock(
       and(
         eq(bloodUnits.status, "available"),
         eq(bloodUnits.component, component),
-        sql`${bloodUnits.bloodGroup} = ANY(${sql.raw(`ARRAY[${allowedGroups.map((g) => `'${g}'`).join(",")}]::blood_group[]`)})`
+        inArray(bloodUnits.bloodGroup, allowedGroups)
       )
     );
   return rows[0]?.count ?? 0;

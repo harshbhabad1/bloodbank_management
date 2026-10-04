@@ -105,6 +105,12 @@ export async function recordDonation(formData: FormData) {
     return { ok: false, error: "Validation failed", fieldErrors: parsed.error.flatten().fieldErrors };
   }
 
+  // Allow one day of slack: the browser's "today" can be ahead of UTC.
+  const latestAllowed = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  if (parsed.data.donatedAt > latestAllowed) {
+    return { ok: false, error: "Donation date cannot be in the future.", fieldErrors: { donatedAt: ["Date cannot be in the future"] } };
+  }
+
   // Get donor
   const [donor] = await db.select().from(donors).where(eq(donors.id, parsed.data.donorId));
   if (!donor) return { ok: false, error: "Donor not found" };

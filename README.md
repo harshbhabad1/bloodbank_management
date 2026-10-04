@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BloodBank Manager
 
-## Getting Started
+Blood bank management system — donors, donations, inventory, and requests. Built with Next.js, Drizzle ORM and Neon Postgres.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Install dependencies:
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+   ```bash
+   pnpm install
+   ```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+2. Copy `.env.example` to `.env.local` and fill in:
+   - `DATABASE_URL` — Neon **pooled** connection string (host contains `-pooler`), with `?sslmode=verify-full`
+   - `DATABASE_URL_UNPOOLED` — Neon **direct** connection string (optional; used by drizzle-kit)
+   - `ADMIN_EMAIL` / `ADMIN_PASSWORD` — the single admin login
+   - `SESSION_SECRET` — at least 32 characters (required in production)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+   If `DATABASE_URL` is unset, the app falls back to the `PGHOST`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` variables from the Neon dashboard.
 
-## Learn More
+3. Create the tables and load sample data:
 
-To learn more about Next.js, take a look at the following resources:
+   ```bash
+   pnpm db:push
+   pnpm db:seed
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+   `db:seed` truncates all tables first.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+4. Start the dev server and open http://localhost:3000:
 
-## Deploy on Vercel
+   ```bash
+   pnpm dev
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deploying
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Set the same environment variables in your host (e.g. Vercel project settings). Use the pooled Neon URL for `DATABASE_URL`.

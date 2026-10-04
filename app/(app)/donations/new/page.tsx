@@ -2,6 +2,7 @@ import { db } from "@/lib/db/index";
 import { donors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import { isValidId } from "@/lib/db/queries";
 import DonationForm from "@/components/donation-form";
 import type { Metadata } from "next";
 
@@ -9,7 +10,7 @@ export const metadata: Metadata = { title: "Record Donation" };
 
 export default async function NewDonationPage({ searchParams }: { searchParams: Promise<{ donorId?: string }> }) {
   const { donorId } = await searchParams;
-  if (!donorId) notFound();
+  if (!donorId || !isValidId(Number(donorId))) notFound();
 
   const [donor] = await db.select().from(donors).where(eq(donors.id, Number(donorId)));
   if (!donor) notFound();
